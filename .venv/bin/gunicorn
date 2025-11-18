@@ -1,4 +1,4 @@
-#!/home/research/apps/research_agent/.venv/bin/python3
+#!/Users/sareengogi/projects/apps/research_agent/.venv/bin/python3.14
 import sys
 from gunicorn.app.wsgiapp import run
 if __name__ == '__main__':

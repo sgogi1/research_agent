@@ -1,50 +1,110 @@
 import os
 import json
+import time
+from typing import List, Dict, Any, Optional
+
 import requests
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
+
+# Set a default model, but allow overrides via env:
+# e.g. export OPENROUTER_MODEL="perplexity/sonar"
+DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "perplexity/sonar")
 
 
 class LLMError(Exception):
+    """Raised for any LLM / OpenRouter related error."""
     pass
 
 
-def _check_api_key():
+def _check_api_key() -> None:
     if not OPENROUTER_API_KEY:
         raise LLMError("OPENROUTER_API_KEY is not set in the environment.")
 
 
-def call_llm(messages, model: str | None = None) -> str:
+def call_llm(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    max_tokens: int = 2000,
+    temperature: float = 0.3,
+    timeout: int = 60,
+    max_retries: int = 2,
+) -> str:
     """
     Call OpenRouter chat completions and return the assistant message text.
 
-    messages: list of {role: "system"|"user"|"assistant", content: str}
+    messages: list of { "role": "system"|"user"|"assistant", "content": "text" }
+    model: override model name (defaults to env OPENROUTER_MODEL or 'perplexity/sonar')
+    max_tokens: requested max_tokens for the response
+    temperature: sampling temperature
+    timeout: per-request timeout in seconds
+    max_retries: number of retries on transient network / 5xx errors
+
+    raises LLMError on any logical / API error.
     """
     _check_api_key()
 
-    payload = {
+    payload: Dict[str, Any] = {
         "model": model or DEFAULT_MODEL,
         "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
     }
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        # Optional but nice:
+        # Optional but recommended tracking headers
         "HTTP-Referer": "https://your-domain-or-ip",
         "X-Title": "AI Research Agent",
     }
 
-    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=120)
+    last_exc: Optional[Exception] = None
 
-    if resp.status_code != 200:
-        raise LLMError(f"OpenRouter error {resp.status_code}: {resp.text[:200]}")
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                OPENROUTER_URL,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
 
-    data = resp.json()
-    try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:
-        raise LLMError(f"Unexpected OpenRouter response format: {e}; body={json.dumps(data)[:400]}")
+            # If API returns a non-2xx, raise_for_status gives us HTTPError
+            try:
+                resp.raise_for_status()
+            except requests.HTTPError as http_err:
+                # Try to include a short snippet of the body for debugging
+                snippet = resp.text[:300]
+                raise LLMError(
+                    f"OpenRouter HTTP error {resp.status_code}: {http_err}; "
+                    f"body snippet: {snippet}"
+                ) from http_err
+
+            data = resp.json()
+
+            # Typical shape: { "choices": [ { "message": { "role": "...", "content": "..." } } ] }
+            try:
+                return data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError) as e:
+                raise LLMError(
+                    "Unexpected OpenRouter response format. "
+                    f"Raw body: {json.dumps(data)[:500]}"
+                ) from e
+
+        except (requests.Timeout, requests.ConnectionError) as net_err:
+            last_exc = net_err
+            # simple backoff
+            if attempt < max_retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise LLMError(f"Network error calling OpenRouter: {net_err}") from net_err
+
+        except requests.RequestException as req_err:
+            # Catch-all for other requests errors (no retry)
+            raise LLMError(f"Request error calling OpenRouter: {req_err}") from req_err
+
+    # If we somehow exit the loop without returning or raising inside
+    raise LLMError(f"Failed to call OpenRouter after {max_retries + 1} attempts: {last_exc}")
