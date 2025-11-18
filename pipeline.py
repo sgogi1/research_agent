@@ -1,159 +1,300 @@
 from datetime import datetime
-from typing import List, Dict, Any
+from pathlib import Path
+import json
+import re
+from typing import Dict, Any, List, Tuple
 
 from llm_client import call_llm
-from research_html import render_report_html
-from oped_html import render_oped_html
-from storage import save_html, save_meta
 from query_refiner import refine_topic_to_queries
 from outline_builder import build_outline
+from section_researcher import research_section
+from html_writer import save_html as write_pretty_html
 
 
-def _split_body_and_sources(report_raw: str) -> tuple[str, List[str]]:
+BASE_DIR = Path(__file__).resolve().parent
+HISTORY_DIR = BASE_DIR / "history"
+HISTORY_DIR.mkdir(exist_ok=True)
+
+
+def _source_key(src: Dict[str, Any]) -> Tuple[str, str]:
+    title = (src.get("title") or "").strip().lower()
+    url = (src.get("url") or "").strip().lower()
+    return (title, url)
+
+
+def generate_full_report(user_topic: str, run_id: str, report_type: str = "research") -> Dict[str, Any]:
     """
-    Very simple heuristic: look for a trailing 'Sources:' or 'References:' section
-    and split it off into a list. If nothing is found, return the whole text as body
-    and an empty sources list.
+    Entry point called from app.py.
+    Dispatches to research or op-ed pipeline based on report_type.
     """
-    if not report_raw:
-        return "", []
+    report_type = (report_type or "research").strip()
+    if report_type not in ("research", "op_ed"):
+        report_type = "research"
 
-    sources: List[str] = []
-    body_text = report_raw
-
-    lower = report_raw.lower()
-    for marker in ["sources:", "references:", "reference list:"]:
-        idx = lower.rfind(marker)
-        if idx != -1:
-            body_text = report_raw[:idx].strip()
-            src_block = report_raw[idx + len(marker) :].strip()
-            sources = [
-                line.strip("-• ").strip()
-                for line in src_block.splitlines()
-                if line.strip()
-            ]
-            break
-
-    return body_text, sources
+    if report_type == "op_ed":
+        return _generate_op_ed_report(user_topic, run_id)
+    else:
+        return _generate_research_report(user_topic, run_id, report_type=report_type)
 
 
-def generate_report_and_oped(user_topic: str, session_id: str) -> None:
+def _generate_research_report(user_topic: str, run_id: str, report_type: str = "research") -> Dict[str, Any]:
+    user_topic = (user_topic or "").strip()
+    if not user_topic:
+        raise ValueError("Topic is empty")
+
+    # 0) Refinement
+    refinement = refine_topic_to_queries(user_topic, n_queries=10)
+    refined_topic = refinement["topic"]
+    queries = refinement["queries"]
+
+    # 1) Outline
+    outline_sections = build_outline(refined_topic, queries)
+
+    # 2) Research each section
+    section_blocks: List[Dict[str, Any]] = []
+    for sec in outline_sections:
+        sec_title = sec["title"]
+        sec_goal = sec["goal"]
+        result = research_section(refined_topic, queries, sec_title, sec_goal)
+        section_blocks.append(
+            {
+                "title": sec_title,
+                "goal": sec_goal,
+                "body": result["body"],
+                "sources": result.get("sources", []),
+            }
+        )
+
+    # 3) Build global_sources (dedup) and normalized bodies
+    global_sources: List[Dict[str, Any]] = []
+    source_key_to_global_id: Dict[Tuple[str, str], int] = {}
+
+    for block in section_blocks:
+        for src in block["sources"]:
+            key = _source_key(src)
+            if not key[0] and not key[1]:
+                continue
+            if key in source_key_to_global_id:
+                continue
+            global_id = len(global_sources) + 1
+            source_key_to_global_id[key] = global_id
+            global_sources.append(
+                {
+                    "global_id": global_id,
+                    "title": src.get("title", "Untitled source"),
+                    "url": (src.get("url") or "").strip(),
+                    "source_type": src.get("source_type", "unspecified"),
+                    "why_relevant": src.get("why_relevant", ""),
+                }
+            )
+
+    citation_pattern = re.compile(r"\[(\d+)\]")
+
+    global_sections: List[Dict[str, str]] = []
+
+    for block in section_blocks:
+        body = block["body"]
+
+        def _replace(match):
+            local_id_str = match.group(1)
+            try:
+                local_id = int(local_id_str)
+            except ValueError:
+                return match.group(0)
+
+            src = next(
+                (s for s in block["sources"] if int(s.get("id", -1)) == local_id),
+                None,
+            )
+            if not src:
+                return match.group(0)
+
+            key = _source_key(src)
+            global_id = source_key_to_global_id.get(key)
+            if not global_id:
+                return match.group(0)
+
+            return f"[{global_id}]"
+
+        normalized_body = citation_pattern.sub(_replace, body)
+
+        global_sections.append(
+            {
+                "title": block["title"],
+                "body": normalized_body,
+            }
+        )
+
+    # 4) Write pretty HTML
+    html_path = HISTORY_DIR / f"{run_id}.html"
+    write_pretty_html(
+        topic=refined_topic,
+        sections=global_sections,
+        sources=global_sources,
+        output_path=str(html_path),
+    )
+
+    # 5) Write metadata JSON
+    meta = {
+        "id": run_id,
+        "user_topic": user_topic,
+        "refined_topic": refined_topic,
+        "report_type": report_type,
+        "queries": queries,
+        "outline_sections": outline_sections,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "html_filename": f"{run_id}.html",
+    }
+    meta_path = HISTORY_DIR / f"{run_id}.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "id": run_id,
+        "topic": refined_topic,
+        "html_path": str(html_path),
+        "meta_path": str(meta_path),
+    }
+
+
+def _generate_op_ed_report(user_topic: str, run_id: str) -> Dict[str, Any]:
     """
-    High-level pipeline for a single research session.
-
-    Steps:
-    0) Use Query Refiner to normalize the topic and propose sub-queries.
-    1) Use Outline Builder to propose a section plan for the research report.
-    2) Ask the LLM to write a structured research report following that plan.
-    3) Ask the LLM to write an op-ed that builds on the research.
-    4) Render both as HTML and save them, along with structured metadata.
+    Generate a Medium-ready op-ed essay:
+    - Strong, clear thesis
+    - Engaging narrative structure
+    - Evidence-backed but voice-y and opinionated
+    - Inline [1]-style citations backed by real sources
     """
     user_topic = (user_topic or "").strip()
     if not user_topic:
-        raise ValueError("Topic is empty in generate_report_and_oped")
+        raise ValueError("Topic is empty")
 
-    # 0) Refinement: normalized topic + sub-queries
-    refinement: Dict[str, Any] = refine_topic_to_queries(user_topic, n_queries=10)
-    refined_topic: str = refinement.get("topic", user_topic)
-    queries: List[str] = refinement.get("queries", [refined_topic])
+    refinement = refine_topic_to_queries(user_topic, n_queries=8)
+    refined_topic = refinement["topic"]
+    queries = refinement["queries"]
 
-    queries_bulleted = "\n".join(f"- {q}" for q in queries)
-
-    # 1) Outline building: structured section plan
-    sections: List[Dict[str, Any]] = build_outline(refined_topic, queries)
-    sections_bulleted = "\n".join(
-        f"{sec['priority']}. {sec['title']} — {sec['goal']}"
-        for sec in sections
+    oped_system = (
+        "You are an op-ed essayist writing for globally reputable outlets "
+        "like The New York Times, The Guardian, The Economist, the Financial Times, "
+        "and The Washington Post.\n\n"
+        "Write in a style that could appear on Medium and earn revenue:\n"
+        "- Strong, clear thesis early on.\n"
+        "- Evidence-backed but conversational and readable.\n"
+        "- Concrete examples, anecdotes, and data.\n"
+        "- Address counterarguments fairly.\n"
+        "- Finish with a sharp, memorable closing.\n\n"
+        "You MUST:\n"
+        "- Use numbered inline citations like [1], [2], etc. in the body.\n"
+        "- Base claims on real, citable sources (articles, reports, studies).\n"
+        "- Return ONLY valid JSON:\n"
+        "{\n"
+        '  \"body\": \"<full op-ed text with headings and [1]-style citations>\",\n'
+        '  \"sources\": [\n'
+        "    {\n"
+        '      \"id\": 1,\n'
+        '      \"title\": \"Source title\",\n'
+        '      \"url\": \"https://...\",\n'
+        '      \"source_type\": \"news analysis / feature / study / policy report / etc.\",\n'
+        '      \"why_relevant\": \"one sentence about why this source matters\"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "- No commentary or text outside the JSON."
     )
 
-    # 2) Research report
-    report_messages = [
+    user_prompt = f"""
+Overall op-ed topic:
+{refined_topic}
+
+Context queries that capture angles to explore:
+{chr(10).join('- ' + q for q in queries)}
+
+Write a single, cohesive op-ed essay suitable for publication on Medium, inspired by
+the editorial standards and tone of globally reputable op-ed outlets.
+
+Structure:
+- A hook and clear thesis in the opening.
+- 2–4 main sections with subheadings that guide the reader.
+- At least one paragraph engaging with counterarguments or skepticism.
+- A strong final section that leaves the reader with a clear takeaway or call to action.
+
+Return ONLY JSON as per schema.
+"""
+
+    raw = call_llm(
+        [
+            {"role": "system", "content": oped_system},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.7,
+        max_tokens=2400,
+    )
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("Op-ed model output was not valid JSON")
+        data = json.loads(raw[start : end + 1])
+
+    body = str(data.get("body", "")).strip()
+    sources_raw = data.get("sources", []) or []
+
+    global_sources: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for src in sources_raw:
+        if not isinstance(src, dict):
+            continue
+        try:
+            local_id = int(src.get("id", 0))
+        except Exception:
+            continue
+        if local_id <= 0:
+            continue
+        if local_id in seen_ids:
+            continue
+        seen_ids.add(local_id)
+        global_sources.append(
+            {
+                "global_id": local_id,
+                "title": src.get("title", "Untitled source"),
+                "url": (src.get("url") or "").strip(),
+                "source_type": src.get("source_type", "unspecified"),
+                "why_relevant": src.get("why_relevant", ""),
+            }
+        )
+
+    global_sections = [
         {
-            "role": "system",
-            "content": (
-                "You are a meticulous research assistant.\n"
-                "Write a structured, neutral research report suitable for an informed reader.\n"
-                "Use clear headings that correspond to the provided section plan.\n"
-                "Avoid excessive hype, and keep opinion clearly separated from evidence."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Core topic:\n"
-                f"{refined_topic}\n\n"
-                f"Research sub-questions to address:\n"
-                f"{queries_bulleted}\n\n"
-                "Planned sections for the report (in order):\n"
-                f"{sections_bulleted}\n\n"
-                "Instructions:\n"
-                "- Follow the section plan closely; each section of the report should map to one of these items.\n"
-                "- Use clear headings matching the section titles (or very close variations).\n"
-                "- Within each section, use paragraphs and bullet points where helpful.\n"
-                "- Be explicit about uncertainties, limitations, and open questions where relevant.\n"
-                "- At the end, add a final section titled 'Sources and References' that lists 5–10 concise notes\n"
-                "  I could search for (e.g., paper titles, author + year, major reports or guidelines).\n"
-            ),
-        },
+            "title": refined_topic,
+            "body": body,
+        }
     ]
 
-    report_raw: str = call_llm(
-        report_messages,
-        temperature=0.35,
-        max_tokens=4000,
+    html_path = HISTORY_DIR / f"{run_id}.html"
+    write_pretty_html(
+        topic=refined_topic,
+        sections=global_sections,
+        sources=global_sources,
+        output_path=str(html_path),
     )
 
-    body_text, sources = _split_body_and_sources(report_raw)
-    report_html = render_report_html(refined_topic, body_text, sources)
-    save_html(session_id, "report", report_html)
-
-    # 3) Op-ed
-    oped_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a thoughtful op-ed writer.\n"
-                "Write a persuasive, opinionated article that builds on a prior neutral research report.\n"
-                "Make your stance clear, but acknowledge uncertainties and opposing views."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Write an op-ed about the following topic:\n"
-                f"{refined_topic}\n\n"
-                "Context:\n"
-                f"- The research report addressed these sub-questions:\n{queries_bulleted}\n\n"
-                f"- The report was structured according to these sections:\n{sections_bulleted}\n\n"
-                "Instructions for the op-ed:\n"
-                "- Assume the reader has read the neutral research report.\n"
-                "- Take a clear, defensible stance on the topic.\n"
-                "- Refer to important debates, trade-offs, and uncertainties, but do not rehash the entire report.\n"
-                "- Use a strong but reasonable voice, not clickbait.\n"
-                "- End with a memorable closing paragraph that leaves the reader with a clear takeaway."
-            ),
-        },
-    ]
-
-    oped_text: str = call_llm(
-        oped_messages,
-        temperature=0.6,   # more opinionated / expressive
-        max_tokens=2000,
-    )
-    oped_html = render_oped_html(refined_topic, oped_text)
-    save_html(session_id, "oped", oped_html)
-
-    # 4) Metadata
-    meta: Dict[str, Any] = {
+    meta = {
+        "id": run_id,
         "user_topic": user_topic,
         "refined_topic": refined_topic,
+        "report_type": "op_ed",
         "queries": queries,
-        "sections": sections,
         "created_at": datetime.utcnow().isoformat() + "Z",
+        "html_filename": f"{run_id}.html",
     }
-    if "raw" in refinement:
-        meta["refiner_raw"] = refinement["raw"]
-    if "error" in refinement:
-        meta["refiner_error"] = refinement["error"]
+    meta_path = HISTORY_DIR / f"{run_id}.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    save_meta(session_id, meta)
+    return {
+        "id": run_id,
+        "topic": refined_topic,
+        "html_path": str(html_path),
+        "meta_path": str(meta_path),
+    }

@@ -48,10 +48,6 @@ Rules:
 
 
 def _robust_json_parse(raw: str) -> Dict[str, Any]:
-    """
-    Try to parse JSON directly; if that fails, attempt to slice out the first {...} block.
-    Raise ValueError if we still can't parse anything.
-    """
     raw = raw.strip()
 
     try:
@@ -75,8 +71,6 @@ def build_outline(topic: str, queries: List[str]) -> List[Dict[str, Any]]:
       {"title": "...", "goal": "...", "priority": 1},
       ...
     ]
-
-    On failure, we return a simple fallback outline with 3 sections.
     """
     topic = (topic or "").strip()
     if not topic:
@@ -112,14 +106,12 @@ Each section should:
         data = _robust_json_parse(raw)
         sections = data.get("sections", [])
 
-        # Normalize and validate
         norm_sections: List[Dict[str, Any]] = []
         for i, sec in enumerate(sections):
             if not isinstance(sec, dict):
                 continue
             title = str(sec.get("title", "")).strip()
             goal = str(sec.get("goal", "")).strip()
-            # model might omit priority or set it weirdly
             priority = sec.get("priority", i + 1)
 
             if not title:
@@ -136,15 +128,12 @@ Each section should:
         if not norm_sections:
             raise ValueError("No valid sections produced")
 
-        # Sort and re-number priorities 1..N
         norm_sections.sort(key=lambda s: s["priority"])
         for idx, sec in enumerate(norm_sections, start=1):
             sec["priority"] = idx
 
-        # Cap between 3 and 7 sections to keep it manageable
         norm_sections = norm_sections[:7]
         if len(norm_sections) < 3:
-            # pad a bit if it's somehow too short
             while len(norm_sections) < 3:
                 norm_sections.append(
                     {
@@ -156,8 +145,7 @@ Each section should:
 
         return norm_sections
 
-    except (LLMError, ValueError, json.JSONDecodeError) as e:
-        # Fallback outline so the pipeline still works
+    except (LLMError, ValueError, json.JSONDecodeError):
         return [
             {
                 "title": "Background and Context",

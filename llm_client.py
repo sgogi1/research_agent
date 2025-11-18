@@ -9,8 +9,8 @@ import requests
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Set a default model, but allow overrides via env:
-# e.g. export OPENROUTER_MODEL="perplexity/sonar"
+# Default model, can be overridden with env var:
+#   export OPENROUTER_MODEL="perplexity/sonar"
 DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "perplexity/sonar")
 
 
@@ -56,7 +56,6 @@ def call_llm(
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        # Optional but recommended tracking headers
         "HTTP-Referer": "https://your-domain-or-ip",
         "X-Title": "AI Research Agent",
     }
@@ -72,11 +71,9 @@ def call_llm(
                 timeout=timeout,
             )
 
-            # If API returns a non-2xx, raise_for_status gives us HTTPError
             try:
                 resp.raise_for_status()
             except requests.HTTPError as http_err:
-                # Try to include a short snippet of the body for debugging
                 snippet = resp.text[:300]
                 raise LLMError(
                     f"OpenRouter HTTP error {resp.status_code}: {http_err}; "
@@ -85,7 +82,6 @@ def call_llm(
 
             data = resp.json()
 
-            # Typical shape: { "choices": [ { "message": { "role": "...", "content": "..." } } ] }
             try:
                 return data["choices"][0]["message"]["content"]
             except (KeyError, IndexError) as e:
@@ -96,15 +92,12 @@ def call_llm(
 
         except (requests.Timeout, requests.ConnectionError) as net_err:
             last_exc = net_err
-            # simple backoff
             if attempt < max_retries:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise LLMError(f"Network error calling OpenRouter: {net_err}") from net_err
 
         except requests.RequestException as req_err:
-            # Catch-all for other requests errors (no retry)
             raise LLMError(f"Request error calling OpenRouter: {req_err}") from req_err
 
-    # If we somehow exit the loop without returning or raising inside
     raise LLMError(f"Failed to call OpenRouter after {max_retries + 1} attempts: {last_exc}")

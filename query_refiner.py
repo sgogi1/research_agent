@@ -27,19 +27,13 @@ Rules:
 
 
 def _robust_json_parse(raw: str) -> Dict[str, Any]:
-    """
-    Try to parse JSON directly; if that fails, attempt to slice out the first {...} block.
-    Raise ValueError if we still can't parse anything.
-    """
     raw = raw.strip()
 
-    # First attempt: straightforward
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Fallback: extract first {...} region
     start = raw.find("{")
     end = raw.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -54,10 +48,10 @@ def refine_topic_to_queries(user_topic: str, n_queries: int = 10) -> Dict[str, A
     Take a user topic string and return:
     {
       "topic": "<normalized topic>",
-      "queries": ["q1", "q2", ..., "qN"]
+      "queries": ["q1", "q2", ..., "qN"],
+      "raw": "<raw LLM output>",
+      "error": "<optional>"
     }
-
-    If anything goes wrong, we fall back to a minimal, safe structure.
     """
     user_topic = (user_topic or "").strip()
     if not user_topic:
@@ -90,7 +84,6 @@ Guidelines:
                 {"role": "system", "content": REFINER_SYSTEM_INSTRUCTIONS},
                 {"role": "user", "content": user_prompt},
             ],
-            # lower temperature for more structured, less creative output
             temperature=0.2,
             max_tokens=800,
         )
@@ -102,7 +95,6 @@ Guidelines:
         if not isinstance(queries_raw, list):
             queries_raw = [str(queries_raw)]
 
-        # Clean queries: cast to str, strip empties, dedupe, cap length
         cleaned: List[str] = []
         seen = set()
         for q in queries_raw:
@@ -116,19 +108,16 @@ Guidelines:
             if len(cleaned) >= n_queries:
                 break
 
-        # Ensure we always have at least one query
         if not cleaned:
             cleaned = [topic]
 
         return {
             "topic": topic,
             "queries": cleaned,
-            "raw": raw,  # optional: keep raw LLM response for debugging
+            "raw": raw,
         }
 
     except (LLMError, ValueError, json.JSONDecodeError) as e:
-        # Graceful fallback: don't kill the whole pipeline
-        # You can log `e` somewhere if you want.
         return {
             "topic": user_topic,
             "queries": [user_topic],

@@ -1,0 +1,56 @@
+{
+  "id": "9fb4d088280e42c5a2ea888ab80f64ca",
+  "user_topic": "long term impact of viral conjunctivitis on eyes",
+  "refined_topic": "Long-term ocular effects of viral conjunctivitis",
+  "queries": [
+    "What are the chronic complications and long-term sequelae of viral conjunctivitis on ocular health?",
+    "How does viral conjunctivitis lead to corneal complications such as keratitis, punctate keratitis, or corneal ulceration?",
+    "What is the incidence and prognosis of chronic viral conjunctivitis and its impact on vision?",
+    "Which viral pathogens are most commonly associated with severe or prolonged conjunctivitis and subsequent ocular damage?",
+    "What are the clinical management strategies to prevent long-term vision impairment following viral conjunctivitis?",
+    "How does viral conjunctivitis affect quality of life in patients with persistent or recurrent symptoms?",
+    "What are the economic and healthcare burdens related to chronic or complicated viral conjunctivitis?",
+    "What role do corticosteroids and other treatments play in managing severe viral conjunctivitis and preventing complications?",
+    "How does viral conjunctivitis transmission dynamics influence public health policies to reduce long-term ocular morbidity?",
+    "What are the ethical considerations in managing contagious viral conjunctivitis to balance patient care and community health?"
+  ],
+  "outline_sections": [
+    {
+      "title": "Epidemiology and Viral Etiology of Conjunctivitis",
+      "goal": "Establish the scope of viral conjunctivitis as a public health concern, identify major viral pathogens (adenovirus, herpes simplex virus), characterize transmission dynamics, incubation periods, and communicability rates, and define the population at risk.",
+      "priority": 1
+    },
+    {
+      "title": "Pathophysiology and Corneal Involvement",
+      "goal": "Explain the mechanistic basis for viral conjunctivitis progression, describe how viral infection leads to corneal complications including keratitis, punctate keratitis, and corneal ulceration, and detail the inflammatory cascade responsible for tissue damage.",
+      "priority": 2
+    },
+    {
+      "title": "Clinical Presentation and Acute Manifestations",
+      "goal": "Characterize the spectrum of symptoms and signs in viral conjunctivitis, distinguish viral from bacterial presentations, document the natural disease course, and establish diagnostic criteria for identifying corneal involvement early.",
+      "priority": 3
+    },
+    {
+      "title": "Long-Term Sequelae and Vision Outcomes",
+      "goal": "Synthesize evidence on chronic complications, incidence of permanent vision impairment, corneal scarring, and chronic conjunctivitis development; establish prognosis for complete resolution versus persistent symptoms; quantify the proportion of patients experiencing long-term ocular morbidity.",
+      "priority": 4
+    },
+    {
+      "title": "Clinical Management Strategies and Therapeutic Interventions",
+      "goal": "Review evidence-based treatment approaches including supportive care, corticosteroid use, antivirals, and pain management; evaluate efficacy in preventing complications and long-term vision loss; address controversies regarding short-term corticosteroid application in acute infection.",
+      "priority": 5
+    },
+    {
+      "title": "Quality of Life, Economic Burden, and Public Health Implications",
+      "goal": "Assess the impact of acute and chronic viral conjunctivitis on patient functioning, work productivity, and healthcare costs; examine transmission control strategies and their role in reducing community-level ocular morbidity; discuss ethical considerations in balancing contagion prevention with patient care.",
+      "priority": 6
+    },
+    {
+      "title": "Future Directions and Research Gaps",
+      "goal": "Identify unresolved questions regarding risk factors for severe disease, long-term corneal remodeling, novel preventive strategies, and the role of emerging viral pathogens; synthesize findings and articulate the clinical and public health significance of understanding viral conjunctivitis sequelae.",
+      "priority": 7
+    }
+  ],
+  "created_at": "2025-11-18T16:29:42.570438Z",
+  "html_filename": "9fb4d088280e42c5a2ea888ab80f64ca.html"
+}
