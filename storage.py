@@ -13,7 +13,7 @@ def ensure_session_dir(session_id: str) -> Path:
 
 def save_html(session_id: str, kind: str, html: str) -> None:
     """
-    kind: 'report' or 'oped'
+    kind: 'report'
     """
     session_dir = ensure_session_dir(session_id)
     target = session_dir / f"{kind}.html"

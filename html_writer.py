@@ -91,13 +91,78 @@ STYLE_BLOCK = """
     text-decoration: underline;
   }
 
+  .citation-link {
+    color: #0a7cff;
+    text-decoration: none;
+    font-weight: normal;
+    cursor: pointer;
+    vertical-align: super;
+    font-size: 0.75em;
+    line-height: 0;
+    position: relative;
+    top: -0.4em;
+    margin-left: 2px;
+    padding: 0;
+    display: inline-block;
+  }
+
+  .citation-link:hover {
+    color: #0056b3;
+    text-decoration: underline;
+    background-color: #f0f7ff;
+    border-radius: 2px;
+    padding: 1px 2px;
+    margin: -1px -2px;
+  }
+
+  .citation-sup {
+    display: none; /* Hide the old citation-sup, we use citation-link for superscript */
+  }
+
   footer.footer-note {
     margin-top: 2.5rem;
     font-size: 0.8rem;
     color: #999;
     line-height: 1.4;
   }
+
+  /* Smooth scrolling for citation links */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Highlight reference when linked to */
+  ol.references-list li:target {
+    background-color: #f0f7ff;
+    padding: 0.5rem;
+    margin-left: -0.5rem;
+    border-left: 3px solid #0a7cff;
+    transition: background-color 0.3s ease;
+  }
 </style>
+<script>
+  // Add click handler for citation links to highlight the reference
+  document.addEventListener('DOMContentLoaded', function() {
+    const citationLinks = document.querySelectorAll('.citation-link');
+    citationLinks.forEach(link => {
+      link.addEventListener('click', function(e) {
+        const refId = this.getAttribute('data-ref');
+        const targetRef = document.getElementById('ref-' + refId);
+        if (targetRef) {
+          // Remove any existing highlight
+          document.querySelectorAll('.references-list li').forEach(li => {
+            li.style.backgroundColor = '';
+          });
+          // Highlight the target reference
+          targetRef.style.backgroundColor = '#f0f7ff';
+          setTimeout(() => {
+            targetRef.style.backgroundColor = '';
+          }, 2000);
+        }
+      });
+    });
+  });
+</script>
 """
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -133,6 +198,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def _render_sections(sections: List[Dict[str, str]]) -> str:
+    import re
     parts = []
     for sec in sections:
         sec_title = html.escape(sec["title"])
@@ -141,7 +207,33 @@ def _render_sections(sections: List[Dict[str, str]]) -> str:
 
         para_html_chunks = []
         for para in para_chunks:
-            para_html_chunks.append(f"<p>{html.escape(para)}</p>")
+            # First escape HTML to prevent XSS
+            para_escaped = html.escape(para)
+            
+            # Pattern to match [1], [2], [12], etc. - find all citations
+            citation_pattern = re.compile(r'\[(\d+)\]')
+            
+            # Find all citation positions in original text
+            citations = list(citation_pattern.finditer(para_escaped))
+            
+            if not citations:
+                # No citations, just output as-is
+                para_html_chunks.append(f"<p>{para_escaped}</p>")
+                continue
+            
+            # Wikipedia-style: Replace [1] with superscript clickable link right where it appears
+            # Process from end to start to maintain positions
+            result = para_escaped
+            for match in reversed(citations):
+                citation_id = match.group(1)
+                start_pos = match.start()
+                end_pos = match.end()
+                
+                # Replace [1] with superscript clickable link
+                superscript_link = f'<a href="#ref-{citation_id}" class="citation-link" data-ref="{citation_id}">[{citation_id}]</a>'
+                result = result[:start_pos] + superscript_link + result[end_pos:]
+            
+            para_html_chunks.append(f"<p>{result}</p>")
 
         section_block = f"""
         <section class="article-section">
@@ -160,6 +252,7 @@ def _render_references(sources: List[Dict[str, str]]) -> str:
         url = s.get("url", "").strip()
         source_type = html.escape(s.get("source_type", ""))
         why = html.escape(s.get("why_relevant", ""))
+        ref_id = s.get("global_id", "")
 
         if url:
             link_html = f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">{html.escape(url)}</a>'
@@ -167,8 +260,8 @@ def _render_references(sources: List[Dict[str, str]]) -> str:
             link_html = ""
 
         refs.append(f"""
-        <li>
-          <strong>[{s['global_id']}] {title}</strong><br/>
+        <li id="ref-{ref_id}">
+          <strong>[{ref_id}] {title}</strong><br/>
           <em>{source_type}</em><br/>
           {why}<br/>
           {link_html}

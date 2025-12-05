@@ -2,6 +2,7 @@ import uuid
 import json
 from pathlib import Path
 from typing import List, Dict, Any
+from dotenv import load_dotenv
 
 from flask import (
     Flask,
@@ -11,6 +12,9 @@ from flask import (
     render_template_string,
     url_for,
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 from pipeline import generate_full_report, HISTORY_DIR
 
@@ -93,15 +97,6 @@ HOME_TEMPLATE = """
       resize: vertical;
       font-family: inherit;
       font-size: 0.95rem;
-    }
-    select.report-type {
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-      border-radius: 10px;
-      border: 1px solid #1f2937;
-      background: #020617;
-      color: #e5e7eb;
-      font-size: 0.9rem;
     }
     button {
       margin-top: 1.2rem;
@@ -210,9 +205,6 @@ HOME_TEMPLATE = """
     .badge-research {
       background: #111827;
     }
-    .badge-oped {
-      background: #1d283a;
-    }
     @media (max-width: 800px) {
       .layout {
         grid-template-columns: minmax(0,1fr);
@@ -225,17 +217,11 @@ HOME_TEMPLATE = """
     <div class="card">
       <h1>AI Research Agent</h1>
       <p class="lead">
-        Generate a structured research article or a revenue-focused op-ed for publication.
+        Generate a structured research article with citations and references.
       </p>
       <form id="topic-form">
         <label for="topic">Topic</label>
         <textarea id="topic" name="topic" placeholder="e.g. Long-term impacts of AI on engineering teams" required></textarea>
-
-        <label for="report_type" style="margin-top:0.75rem;">Report type</label>
-        <select id="report_type" name="report_type" class="report-type">
-          <option value="research" selected>Deep research report (structured, citation-heavy)</option>
-          <option value="op_ed">Revenue-focused op-ed essay (Medium-ready)</option>
-        </select>
 
         <button id="submit-btn" type="submit">Generate report</button>
 
@@ -264,12 +250,7 @@ HOME_TEMPLATE = """
               </a>
             </p>
             <div class="history-meta">
-              {% set rt = item.get('report_type','research') %}
-              {% if rt == 'op_ed' %}
-                <span class="badge badge-oped">Op-ed</span>
-              {% else %}
-                <span class="badge badge-research">Research</span>
-              {% endif %}
+              <span class="badge badge-research">Research</span>
               {{ item.get('created_at', '') }}
             </div>
           </li>
@@ -316,9 +297,7 @@ HOME_TEMPLATE = """
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const topicEl = document.getElementById('topic');
-      const typeEl = document.getElementById('report_type');
       const topic = topicEl.value.trim();
-      const reportType = typeEl.value;
       if (!topic) return;
 
       btn.disabled = true;
@@ -331,7 +310,7 @@ HOME_TEMPLATE = """
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ topic, report_type: reportType })
+          body: JSON.stringify({ topic, report_type: "research" })
         });
 
         if (!res.ok) {
@@ -368,9 +347,7 @@ def generate():
     if not topic:
         return jsonify({"error": "Missing topic"}), 400
 
-    report_type = (data.get("report_type") or "research").strip()
-    if report_type not in ("research", "op_ed"):
-        report_type = "research"
+    report_type = "research"
 
     run_id = uuid.uuid4().hex
 
